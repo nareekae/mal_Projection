@@ -2,6 +2,9 @@
 let video;
 let bodyPose;
 let poses = [];
+let cameraReady = false;
+let cameraError = "";
+
 
 // ---------- PNG sprites ----------
 const SPRITE_FILES = [
