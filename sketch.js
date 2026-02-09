@@ -62,9 +62,10 @@ function preload() {
 }
 
 async function setup() {
+  // --- Canvas ---
   createCanvas(windowWidth, windowHeight);
 
-  // ---- Validate libraries early (gives clear console errors) ----
+  // --- Validate libraries early (clear errors) ---
   if (typeof Matter === "undefined") {
     throw new Error("Matter.js not found. Add the matter.js library.");
   }
@@ -72,34 +73,24 @@ async function setup() {
     throw new Error("ml5.js not found. Add the ml5.js library.");
   }
 
-  // Bind Matter modules now that Matter exists
+  // --- Bind Matter modules now that Matter exists ---
   Engine = Matter.Engine;
-  World = Matter.World;
+  World  = Matter.World;
   Bodies = Matter.Bodies;
-  Body = Matter.Body;
+  Body   = Matter.Body;
 
-  // Webcam
-  video = createCapture(VIDEO, { flipped: true });
-  video.size(windowWidth, windowHeight);
-  video.hide();
-
-  // Load BodyPose model (supports both sync + async constructor)
-  let maybeModel = ml5.bodyPose({ flipped: true });
-  bodyPose = (typeof maybeModel?.then === "function") ? await maybeModel : maybeModel;
-
-  // Start pose detection
-  bodyPose.detectStart(video, gotPoses);
-
-  // Matter world
+  // --- Create Matter world ---
   engine = Engine.create();
-  world = engine.world;
+  world  = engine.world;
   world.gravity.y = CFG.gravityY;
 
-  // Filter out any failed loads (extra safety)
+  // --- Filter out any failed loads (extra safety) ---
   spriteImgs = spriteImgs.filter(img => img && img.width && img.height);
+
+  // --- Create sprites (only if images loaded) ---
+  sprites = []; // reset (safe if hot-reloading)
   if (spriteImgs.length === 0) {
     console.warn("No sprite images loaded. Check your assets/ paths.");
-    // Don’t crash—just run with no sprites.
   } else {
     for (let i = 0; i < CFG.spriteCount; i++) {
       const img = random(spriteImgs);
@@ -110,10 +101,54 @@ async function setup() {
     }
   }
 
-  // Pushers
-  leftHandPusher = new PusherBody(0, 0, CFG.pusherRadiusHand);
+  // --- Create pushers (need world to exist first) ---
+  leftHandPusher  = new PusherBody(0, 0, CFG.pusherRadiusHand);
   rightHandPusher = new PusherBody(0, 0, CFG.pusherRadiusHand);
-  nosePusher = new PusherBody(0, 0, CFG.pusherRadiusNose);
+  nosePusher      = new PusherBody(0, 0, CFG.pusherRadiusNose);
+
+  // --- Webcam + BodyPose ---
+  // IMPORTANT: start BodyPose only once the camera stream is ready.
+  // This avoids "black video" / no camera on hosted sites.
+  video = createCapture(VIDEO, { flipped: true }, async () => {
+    try {
+      // Size capture to match canvas
+      video.size(windowWidth, windowHeight);
+
+      // iOS / mobile friendliness + autoplay friendliness
+      video.elt.setAttribute("playsinline", "");
+      video.elt.muted = true;
+
+      // Force playback (some browsers need this)
+      const playPromise = video.elt.play();
+      if (playPromise && typeof playPromise.then === "function") {
+        await playPromise;
+      }
+
+      // Hide the DOM video element; we’ll draw it to canvas with image(video, ...)
+      video.hide();
+
+      // Load BodyPose model (supports both sync + async constructor)
+      const maybeModel = ml5.bodyPose({ flipped: true });
+      bodyPose = (maybeModel && typeof maybeModel.then === "function")
+        ? await maybeModel
+        : maybeModel;
+
+      // Start pose detection
+      bodyPose.detectStart(video, gotPoses);
+
+      console.log("✅ Camera + BodyPose started");
+    } catch (err) {
+      console.error("❌ Camera/BodyPose init failed:", err);
+
+      // Helpful hint if permissions are blocked
+      console.warn(
+        "If you're on GitHub Pages, make sure camera permission is set to Allow for this site (lock icon in the address bar)."
+      );
+    }
+  });
+
+  // (Optional) If you want to see the DOM video briefly for debugging,
+  // comment out video.hide() above.
 }
 
 function draw() {
