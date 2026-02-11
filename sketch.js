@@ -158,7 +158,6 @@ async function startBodyPose() {
 
   // (Optional) If you want to see the DOM video briefly for debugging,
   // comment out video.hide() above.
-}
 
 function draw() {
   background(0);
