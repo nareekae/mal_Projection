@@ -117,7 +117,7 @@ function setup() {
     audio: false,
   };
 
-  console.log("CAPTURE CONSTRAINTS:", { video: true, audio: false });
+
   video = createCapture({ video: true, audio: false });
   video.size(windowWidth, windowHeight);
 
