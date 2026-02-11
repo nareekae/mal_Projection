@@ -163,7 +163,7 @@ function draw() {
   background(0);
 
   // Only draw video if it exists
-  if (video) {
+if (video) {
   push();
   translate(width, 0);
   scale(-1, 1);
