@@ -107,29 +107,42 @@ async function setup() {
   rightHandPusher = new PusherBody(0, 0, CFG.pusherRadiusHand);
   nosePusher      = new PusherBody(0, 0, CFG.pusherRadiusNose);
 
-  // --- Webcam + BodyPose ---
-  // IMPORTANT: start BodyPose only once the camera stream is ready.
-  // This avoids "black video" / no camera on hosted sites.
-  video = createCapture(VIDEO, { flipped: true }, async () => {
+   // --- Webcam + BodyPose ---
+  // IMPORTANT: In p5 v2, use a constraints object (video/audio) and do NOT pass {flipped:true} to createCapture.
+  // We'll flip visually when drawing, and keep pose coords aligned by flipping the video draw.
+
+  const constraints = {
+    video: {
+      facingMode: "user", // use "environment" for rear camera on phones
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+    },
+    audio: false,
+  };
+
+  video = createCapture(constraints);
+
+  // Match capture to canvas for easier mapping
+  video.size(windowWidth, windowHeight);
+
+  // iOS / mobile friendliness
+  video.elt.setAttribute("playsinline", "");
+  video.elt.muted = true;
+
+  // Hide the DOM video element; we’ll draw it to the canvas
+  video.hide();
+
+  // Wait until the browser has real video dimensions before starting BodyPose
+  video.elt.onloadedmetadata = async () => {
     try {
-      // Size capture to match canvas
-      video.size(windowWidth, windowHeight);
-
-      // iOS / mobile friendliness + autoplay friendliness
-      video.elt.setAttribute("playsinline", "");
-      video.elt.muted = true;
-
       // Force playback (some browsers need this)
       const playPromise = video.elt.play();
       if (playPromise && typeof playPromise.then === "function") {
         await playPromise;
       }
 
-      // Hide the DOM video element; we’ll draw it to canvas with image(video, ...)
-      video.hide();
-
-      // Load BodyPose model (supports both sync + async constructor)
-      const maybeModel = ml5.bodyPose({ flipped: true });
+      // Load BodyPose model (ml5 v0.12+ style)
+      const maybeModel = ml5.bodyPose();
       bodyPose = (maybeModel && typeof maybeModel.then === "function")
         ? await maybeModel
         : maybeModel;
@@ -140,12 +153,9 @@ async function setup() {
       console.log("✅ Camera + BodyPose started");
     } catch (err) {
       console.error("❌ Camera/BodyPose init failed:", err);
-
-      // Helpful hint if permissions are blocked
-      console.warn(
-        "If you're on GitHub Pages, make sure camera permission is set to Allow for this site (lock icon in the address bar)."
-      );
+      console.warn("Check site camera permissions (lock icon in address bar) and reload.");
     }
+  };
   });
 
   // (Optional) If you want to see the DOM video briefly for debugging,
@@ -156,7 +166,13 @@ function draw() {
   background(0);
 
   // Only draw video if it exists
-  if (video) image(video, 0, 0, width, height);
+  if (video) {
+  push();
+  translate(width, 0);
+  scale(-1, 1);
+  image(video, 0, 0, width, height);
+  pop();
+}
 
   // Only step physics if engine exists
   if (engine) Engine.update(engine);
@@ -208,9 +224,12 @@ function updatePushersFromPose() {
   for (const kp of pose.keypoints) {
     if (kp.confidence < CFG.poseConfidence) continue;
 
-    if (kp.name === "left_wrist") leftHandPusher.setPosition(kp.x, kp.y);
-    else if (kp.name === "right_wrist") rightHandPusher.setPosition(kp.x, kp.y);
-    else if (kp.name === "nose") nosePusher.setPosition(kp.x, kp.y);
+const fx = width - kp.x; // mirror x to match the mirrored video you’re drawing
+
+if (kp.name === "left_wrist") leftHandPusher.setPosition(fx, kp.y);
+else if (kp.name === "right_wrist") rightHandPusher.setPosition(fx, kp.y);
+else if (kp.name === "nose") nosePusher.setPosition(fx, kp.y);
+
   }
 }
 
