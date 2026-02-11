@@ -62,7 +62,7 @@ function preload() {
   );
 }
 
-async function setup() {
+function setup() {
   // --- Canvas ---
   createCanvas(windowWidth, windowHeight);
 
@@ -107,13 +107,10 @@ async function setup() {
   rightHandPusher = new PusherBody(0, 0, CFG.pusherRadiusHand);
   nosePusher      = new PusherBody(0, 0, CFG.pusherRadiusNose);
 
-   // --- Webcam + BodyPose ---
-  // IMPORTANT: In p5 v2, use a constraints object (video/audio) and do NOT pass {flipped:true} to createCapture.
-  // We'll flip visually when drawing, and keep pose coords aligned by flipping the video draw.
-
+  // --- Webcam + BodyPose ---
   const constraints = {
     video: {
-      facingMode: "user", // use "environment" for rear camera on phones
+      facingMode: "user",
       width: { ideal: 1280 },
       height: { ideal: 720 },
     },
@@ -121,8 +118,6 @@ async function setup() {
   };
 
   video = createCapture(constraints);
-
-  // Match capture to canvas for easier mapping
   video.size(windowWidth, windowHeight);
 
   // iOS / mobile friendliness
@@ -132,31 +127,33 @@ async function setup() {
   // Hide the DOM video element; we’ll draw it to the canvas
   video.hide();
 
-  // Wait until the browser has real video dimensions before starting BodyPose
-  video.elt.onloadedmetadata = async () => {
-    try {
-      // Force playback (some browsers need this)
-      const playPromise = video.elt.play();
-      if (playPromise && typeof playPromise.then === "function") {
-        await playPromise;
-      }
-
-      // Load BodyPose model (ml5 v0.12+ style)
-      const maybeModel = ml5.bodyPose();
-      bodyPose = (maybeModel && typeof maybeModel.then === "function")
-        ? await maybeModel
-        : maybeModel;
-
-      // Start pose detection
-      bodyPose.detectStart(video, gotPoses);
-
-      console.log("✅ Camera + BodyPose started");
-    } catch (err) {
-      console.error("❌ Camera/BodyPose init failed:", err);
-      console.warn("Check site camera permissions (lock icon in address bar) and reload.");
-    }
+  // Wait until video has metadata (real dimensions) then start BodyPose
+  video.elt.onloadedmetadata = () => {
+    startBodyPose();
   };
-  });
+}
+
+// Start bodypose (separated so we can use async cleanly)
+async function startBodyPose() {
+  try {
+    const playPromise = video.elt.play();
+    if (playPromise && typeof playPromise.then === "function") {
+      await playPromise;
+    }
+
+    const maybeModel = ml5.bodyPose();
+    bodyPose = (maybeModel && typeof maybeModel.then === "function")
+      ? await maybeModel
+      : maybeModel;
+
+    bodyPose.detectStart(video, gotPoses);
+
+    console.log("✅ Camera + BodyPose started");
+  } catch (err) {
+    console.error("❌ Camera/BodyPose init failed:", err);
+    console.warn("Check site camera permissions (lock icon in address bar) and reload.");
+  }
+}
 
   // (Optional) If you want to see the DOM video briefly for debugging,
   // comment out video.hide() above.
