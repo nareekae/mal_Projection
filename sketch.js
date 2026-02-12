@@ -108,7 +108,7 @@ async function loadAllAssets() {
     }
   }
   {
-    const p = ASSET_BASE + "Lunar_New_Year.png";
+    const p = ASSET_BASE + "Lunar New Year 2026.png";
     const res = await loadImageAsync(p);
     if (res.ok) {
       cornerBR = res.img;
