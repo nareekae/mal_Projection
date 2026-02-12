@@ -39,7 +39,7 @@ const CFG = {
   pusherRadiusNose: 85,
   poseConfidence: 0.15,
   showDebugPushers: false,
-  showDebugText: true,
+  showDebugText: false,
 };
 
 const CORNER = { padding: 50, tlScale: 0.7, brScale: 0.35 };
