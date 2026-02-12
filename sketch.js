@@ -1,23 +1,15 @@
 /*
-  PNG SPRITES + POSE (BodyPose or PoseNet fallback) + MATTER.JS
-  GitHub Pages–safe + debug-friendly
-
-  What this version fixes vs your current file:
-  1) ✅ SPRITE_FILES array is valid JS (you were missing commas, which breaks the whole sketch)
-  2) ✅ Uses "./assets/..." paths everywhere + logs which images fail to load
-  3) ✅ Starts pose detection safely:
-     - If ml5.bodyPose exists: uses it
-     - Otherwise falls back to ml5.poseNet (works with ml5 v0.12.2)
-  4) ✅ Mirrors the video AND mirrors pose X so pushers match what you see
-  5) ✅ Shows debug text: sprites loaded count + poses count + which pose system is active
+  PNG SPRITES + POSE (BodyPose v1, PoseNet fallback) + MATTER.JS
+  - Forces TF backend away from WebGPU to reduce errors
+  - Loud asset load logging + on-canvas warning if sprites are missing
 */
 
-// ---------- ml5 pose ----------
 let video;
-let poseModel = null;      // can be BodyPose model or PoseNet model
-let poses = [];            // normalized format: [{ keypoints:[{name,x,y,confidence}, ...] }]
+let poseModel = null;
+let poses = [];
+let poseSystem = "none";
 
-// ---------- PNG sprites ----------
+// IMPORTANT: these MUST match GitHub filenames EXACTLY (case-sensitive)
 const SPRITE_FILES = [
   "./assets/Mal.png",
   "./assets/Mal1.png",
@@ -34,18 +26,14 @@ const SPRITE_FILES = [
 let spriteImgs = [];
 let cornerTL, cornerBR;
 
-// ---------- Matter.js ----------
+// Matter.js
 let Engine, World, Bodies, Body;
 let engine, world;
 
-// ---------- Simulation ----------
+// Simulation
 let sprites = [];
 let leftHandPusher, rightHandPusher, nosePusher;
 
-// ---------- Debug ----------
-let poseSystem = "none"; // "bodyPose" | "poseNet" | "none"
-
-// ---------- Config ----------
 const CFG = {
   spriteCount: 25,
   spriteScaleMin: 0.10,
@@ -66,21 +54,44 @@ const CORNER = {
   brScale: 0.35,
 };
 
+async function forceTfBackend() {
+  // ml5 bundles tfjs; this reduces WebGPU noise/crashes on browsers without WebGPU
+  if (typeof tf === "undefined") return;
+
+  try {
+    // Prefer WebGL; else CPU
+    if (tf.setBackend && tf.ready) {
+      // Try webgl first
+      try {
+        await tf.setBackend("webgl");
+        await tf.ready();
+        console.log("✅ TF backend set to webgl");
+        return;
+      } catch (e) {
+        // Fall through
+      }
+      await tf.setBackend("cpu");
+      await tf.ready();
+      console.log("✅ TF backend set to cpu");
+    }
+  } catch (e) {
+    console.warn("⚠️ Could not force TF backend:", e);
+  }
+}
+
 function preload() {
-  // --- Corners (with loud failure logs) ---
   cornerTL = loadImage(
     "./assets/GYOPO.png",
     () => console.log("✅ loaded ./assets/GYOPO.png"),
-    () => console.error("❌ failed ./assets/GYOPO.png (check folder name + file case)")
+    () => console.error("❌ failed ./assets/GYOPO.png (check exact name + folder)")
   );
 
   cornerBR = loadImage(
     "./assets/Lunar_New_Year.png",
     () => console.log("✅ loaded ./assets/Lunar_New_Year.png"),
-    () => console.error("❌ failed ./assets/Lunar_New_Year.png (check folder name + file case)")
+    () => console.error("❌ failed ./assets/Lunar_New_Year.png (check exact name + folder)")
   );
 
-  // --- Sprites (with loud failure logs) ---
   spriteImgs = SPRITE_FILES.map((path) =>
     loadImage(
       path,
@@ -91,10 +102,8 @@ function preload() {
 }
 
 function setup() {
-  // --- Canvas ---
   createCanvas(windowWidth, windowHeight);
 
-  // --- Validate libraries ---
   if (typeof Matter === "undefined") {
     throw new Error("Matter.js not found. Check your <script> tag for matter.min.js");
   }
@@ -102,21 +111,18 @@ function setup() {
     throw new Error("ml5.js not found. Check your <script> tag for ml5.min.js");
   }
 
-  // --- Bind Matter modules ---
   Engine = Matter.Engine;
   World = Matter.World;
   Bodies = Matter.Bodies;
   Body = Matter.Body;
 
-  // --- Create Matter world ---
   engine = Engine.create();
   world = engine.world;
   world.gravity.y = CFG.gravityY;
 
-  // --- Filter out any failed sprite loads ---
+  // Filter failed sprite loads
   spriteImgs = spriteImgs.filter((img) => img && img.width && img.height);
 
-  // --- Create sprites (only if images loaded) ---
   sprites = [];
   if (spriteImgs.length === 0) {
     console.warn("⚠️ No sprite images loaded. Check /assets paths + capitalization on GitHub.");
@@ -130,12 +136,10 @@ function setup() {
     }
   }
 
-  // --- Create pushers ---
   leftHandPusher = new PusherBody(0, 0, CFG.pusherRadiusHand);
   rightHandPusher = new PusherBody(0, 0, CFG.pusherRadiusHand);
   nosePusher = new PusherBody(0, 0, CFG.pusherRadiusNose);
 
-  // --- Webcam ---
   const constraints = {
     video: {
       facingMode: "user",
@@ -151,37 +155,30 @@ function setup() {
   video.elt.muted = true;
   video.hide();
 
-  // Start pose model only after video metadata is ready
   video.elt.onloadedmetadata = () => {
     startPose();
   };
 }
 
-/**
- * Starts pose detection.
- * - If ml5.bodyPose exists, use it.
- * - Else if ml5.poseNet exists, use it.
- * This avoids the "ml5.bodyPose is not a function" crash.
- */
 async function startPose() {
   try {
-    // Ensure playback is running (some browsers need this)
+    // stabilize TF backend (avoid WebGPU issues)
+    await forceTfBackend();
+
+    // ensure video plays
     const playPromise = video.elt.play();
     if (playPromise && typeof playPromise.then === "function") {
       await playPromise;
     }
 
-    // ---- BodyPose path (ml5 v1+) ----
+    // BodyPose (ml5 v1+)
     if (typeof ml5.bodyPose === "function") {
       poseSystem = "bodyPose";
       console.log("✅ Using ml5.bodyPose(video)");
-
       let maybe = ml5.bodyPose(video);
       poseModel = (maybe && typeof maybe.then === "function") ? await maybe : maybe;
 
-      // ml5 bodyPose API: detectStart(video, callback)
       poseModel.detectStart(video, (results) => {
-        // results should already be in your expected format
         poses = results || [];
       });
 
@@ -189,14 +186,12 @@ async function startPose() {
       return;
     }
 
-    // ---- PoseNet path (ml5 v0.x) ----
+    // PoseNet fallback (ml5 v0.x)
     if (typeof ml5.poseNet === "function") {
       poseSystem = "poseNet";
-      console.log("✅ BodyPose not available. Falling back to ml5.poseNet(video)");
-
+      console.log("✅ Falling back to ml5.poseNet(video)");
       poseModel = ml5.poseNet(video, () => console.log("✅ PoseNet model loaded"));
 
-      // PoseNet emits results with a different shape
       poseModel.on("pose", (results) => {
         poses = (results || []).map((r) => ({
           keypoints: (r.pose?.keypoints || []).map((k) => ({
@@ -212,9 +207,8 @@ async function startPose() {
       return;
     }
 
-    // ---- Neither available ----
     poseSystem = "none";
-    throw new Error("Neither ml5.bodyPose nor ml5.poseNet is available. Check your ml5 <script> include.");
+    throw new Error("Neither ml5.bodyPose nor ml5.poseNet exists. Check ml5 script include.");
   } catch (err) {
     console.error("❌ Pose init failed:", err);
   }
@@ -223,7 +217,7 @@ async function startPose() {
 function draw() {
   background(0);
 
-  // --- Draw mirrored video (mirror-like feel) ---
+  // mirrored video
   if (video) {
     push();
     translate(width, 0);
@@ -232,29 +226,23 @@ function draw() {
     pop();
   }
 
-  // --- Step physics ---
   if (engine) Engine.update(engine);
 
-  // --- Draw sprites ---
   for (const s of sprites) {
     s.show();
     s.bounceOffEdges();
   }
 
-  // --- Update pushers ---
   updatePushersFromPose();
 
-  // --- Debug pushers ---
   if (CFG.showDebugPushers) {
     leftHandPusher.showDebug();
     rightHandPusher.showDebug();
     nosePusher.showDebug();
   }
 
-  // --- Corner overlays ---
   drawFixedCorners();
 
-  // --- Debug HUD ---
   if (CFG.showDebugText) {
     push();
     fill(0, 255, 0);
@@ -263,6 +251,12 @@ function draw() {
     text(`poseSystem: ${poseSystem}`, 20, 26);
     text(`poses: ${poses.length}`, 20, 46);
     text(`spritesLoaded: ${spriteImgs.length}`, 20, 66);
+
+    if (spriteImgs.length === 0) {
+      fill(255, 80, 80);
+      textSize(18);
+      text("⚠️ SPRITES NOT LOADING. Open DevTools → Network → Img to see 404 filenames.", 20, 95);
+    }
     pop();
   }
 }
@@ -294,7 +288,6 @@ function windowResized() {
 
 function updatePushersFromPose() {
   if (!poses || poses.length === 0) return;
-
   const first = poses[0];
   if (!first || !first.keypoints) return;
 
@@ -302,8 +295,7 @@ function updatePushersFromPose() {
     if (!kp) continue;
     if (kp.confidence < CFG.poseConfidence) continue;
 
-    // Mirror X to match mirrored video draw
-    const fx = width - kp.x;
+    const fx = width - kp.x; // mirror x to match video mirror
 
     if (kp.name === "left_wrist") leftHandPusher.setPosition(fx, kp.y);
     else if (kp.name === "right_wrist") rightHandPusher.setPosition(fx, kp.y);
@@ -326,11 +318,7 @@ class SpriteBody {
       restitution: CFG.restitution,
     });
 
-    Body.setVelocity(this.body, {
-      x: random(-1.2, 1.2),
-      y: random(-1.2, 1.2),
-    });
-
+    Body.setVelocity(this.body, { x: random(-1.2, 1.2), y: random(-1.2, 1.2) });
     World.add(world, this.body);
   }
 
@@ -389,6 +377,7 @@ class PusherBody {
     pop();
   }
 }
+
 
 
 
