@@ -11,16 +11,16 @@ let poseSystem = "none";
 
 // IMPORTANT: these MUST match GitHub filenames EXACTLY (case-sensitive)
 const SPRITE_FILES = [
-  "./assets/Mal.png",
-  "./assets/Mal1.png",
-  "./assets/Mal2.png",
-  "./assets/Mal3.png",
-  "./assets/Mal4.png",
-  "./assets/Mal5.png",
-  "./assets/Mal6.png",
-  "./assets/Mal7.png",
-  "./assets/Mal8.png",
-  "./assets/Mal9.png",
+  "./assets/mal.png",
+  "./assets/mal1.png",
+  "./assets/mal2.png",
+  "./assets/mal3.png",
+  "./assets/mal4.png",
+  "./assets/mal5.png",
+  "./assets/mal6.png",
+  "./assets/mal7.png",
+  "./assets/mal8.png",
+  "./assets/mal9.png",
 ];
 
 let spriteImgs = [];
