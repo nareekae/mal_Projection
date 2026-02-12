@@ -10,17 +10,19 @@ let poses = [];
 let poseSystem = "none";
 
 // IMPORTANT: these MUST match GitHub filenames EXACTLY (case-sensitive)
+const ASSET_BASE = "/mal_Projection/assets/";
+
 const SPRITE_FILES = [
-  "./assets/mal.png",
-  "./assets/mal1.png",
-  "./assets/mal2.png",
-  "./assets/mal3.png",
-  "./assets/mal4.png",
-  "./assets/mal5.png",
-  "./assets/mal6.png",
-  "./assets/mal7.png",
-  "./assets/mal8.png",
-  "./assets/mal9.png",
+  ASSET_BASE + "Mal.png",
+  ASSET_BASE + "Mal1.png",
+  ASSET_BASE + "Mal2.png",
+  ASSET_BASE + "Mal3.png",
+  ASSET_BASE + "Mal4.png",
+  ASSET_BASE + "Mal5.png",
+  ASSET_BASE + "Mal6.png",
+  ASSET_BASE + "Mal7.png",
+  ASSET_BASE + "Mal8.png",
+  ASSET_BASE + "Mal9.png",
 ];
 
 let spriteImgs = [];
@@ -80,17 +82,8 @@ async function forceTfBackend() {
 }
 
 function preload() {
-  cornerTL = loadImage(
-    "./assets/GYOPO.png",
-    () => console.log("✅ loaded ./assets/GYOPO.png"),
-    () => console.error("❌ failed ./assets/GYOPO.png (check exact name + folder)")
-  );
-
-  cornerBR = loadImage(
-    "./assets/Lunar_New_Year.png",
-    () => console.log("✅ loaded ./assets/Lunar_New_Year.png"),
-    () => console.error("❌ failed ./assets/Lunar_New_Year.png (check exact name + folder)")
-  );
+cornerTL = loadImage(ASSET_BASE + "GYOPO.png");
+cornerBR = loadImage(ASSET_BASE + "Lunar_New_Year.png");
 
   spriteImgs = SPRITE_FILES.map((path) =>
     loadImage(
@@ -103,6 +96,10 @@ function preload() {
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
+
+  console.log("🔎 Asset base resolves to:", new URL(ASSET_BASE, window.location.href).href);
+console.log("🔎 Example sprite URL:", new URL(SPRITE_FILES[0], window.location.href).href);
+
 
   if (typeof Matter === "undefined") {
     throw new Error("Matter.js not found. Check your <script> tag for matter.min.js");
