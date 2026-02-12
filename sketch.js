@@ -16,16 +16,16 @@ let poses = [];
 
 // ---------- PNG sprites ----------
 const SPRITE_FILES = [
-  "assets/Mal.png",
-  "assets/Mal1.png",
-  "assets/Mal2.png",
-  "assets/Mal3.png",
-  "assets/Mal4.png",
-  "assets/Mal5.png",
-  "assets/Mal6.png",
-  "assets/Mal7.png",
-  "assets/Mal8.png",
-  "assets/Mal9.png",
+  "./assets/Mal.png",
+  "./assets/Mal1.png"
+  "./assets/Mal2.png"
+  "./assets/Mal3.png"
+  "./assets/Mal4.png"
+  "./assets/Mal5.png"
+  "./assets/Mal6.png"
+  "./assets/Mal7.png"
+  "./assets/Mal8.png"
+  "./assets/Mal9.png"
 ];
 
 let spriteImgs = [];
@@ -61,8 +61,8 @@ const CORNER = {
 };
 
 function preload() {
-  cornerTL = loadImage("assets/GYOPO.png");
-  cornerBR = loadImage("assets/Lunar_New_Year.png");
+  cornerTL = loadImage("./assets/GYOPO.png");
+  cornerBR = loadImage("./assets/Lunar_New_Year.png");
 
   // Load sprites. preload() will block until they load (if paths are correct).
   spriteImgs = SPRITE_FILES.map((path) =>
@@ -149,32 +149,51 @@ function setup() {
 // Start bodypose (separated so we can use async cleanly)
 async function startBodyPose() {
   try {
-    // Some browsers need an explicit play
     const playPromise = video.elt.play();
     if (playPromise && typeof playPromise.then === "function") {
       await playPromise;
     }
 
-    // Load BodyPose model (ml5 v0.12.2 supports this)
-    const maybeModel = ml5.bodyPose();
-    bodyPose =
-      maybeModel && typeof maybeModel.then === "function"
-        ? await maybeModel
-        : maybeModel;
+    // ---- Use BodyPose if available, otherwise fall back to PoseNet ----
+    if (typeof ml5.bodyPose === "function") {
+      console.log("Using ml5.bodyPose()");
+      bodyPose = ml5.bodyPose(); // some builds are sync
+      if (bodyPose && typeof bodyPose.then === "function") bodyPose = await bodyPose;
+      bodyPose.detectStart(video, gotPoses);
+    } else if (typeof ml5.poseNet === "function") {
+      console.log("BodyPose unavailable. Falling back to ml5.poseNet()");
+      bodyPose = ml5.poseNet(video, () => console.log("✅ PoseNet model loaded"));
+      bodyPose.on("pose", (results) => {
+        // Convert PoseNet format → your existing {keypoints:[{name,x,y,confidence}]} format
+        poses = (results || []).map(r => ({
+          keypoints: (r.pose?.keypoints || []).map(k => ({
+            name: k.part,
+            x: k.position.x,
+            y: k.position.y,
+            confidence: k.score
+          }))
+        }));
+      });
+    } else {
+      throw new Error("Neither ml5.bodyPose nor ml5.poseNet is available. Check ml5 script include.");
+    }
 
-    // Start pose detection
-    bodyPose.detectStart(video, gotPoses);
-
-    console.log("✅ Camera + BodyPose started");
+    console.log("✅ Pose detection started");
   } catch (err) {
     console.error("❌ Camera/BodyPose init failed:", err);
-    console.warn("Check site camera permissions (lock icon in address bar) and reload.");
   }
 }
 
 function draw() {
   background(0);
 
+  push();
+  fill(0, 255, 0);
+  noStroke();
+  textSize(18);
+  text(`poses: ${poses.length}`, 20, 30);
+  pop();
+  
   // Draw mirrored video (so it feels like a mirror)
   if (video) {
     push();
