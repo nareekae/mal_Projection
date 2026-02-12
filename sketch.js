@@ -98,7 +98,7 @@ async function loadAllAssets() {
 
   // Load corners with loud logs
   {
-    const p = ASSET_BASE + "GYOPO Logo.png";
+    const p = ASSET_BASE + "G.png";
     const res = await loadImageAsync(p);
     if (res.ok) {
       cornerTL = res.img;
