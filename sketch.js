@@ -1,8 +1,18 @@
+/* 
+  PNG SPRITES + BODYPOSE + MATTER.JS (GitHub Pages safe)
+
+  Key fixes included:
+  - Uses ONE valid constraints object and actually passes it into createCapture(constraints)
+  - No extra stray braces / callbacks
+  - Starts BodyPose only after video metadata is ready
+  - Draws mirrored video + mirrors pose X so pushers line up visually
+  - Optional on-screen debug counter for poses
+*/
+
 // ---------- ml5 bodyPose ----------
 let video;
 let bodyPose;
 let poses = [];
-
 
 // ---------- PNG sprites ----------
 const SPRITE_FILES = [
@@ -29,6 +39,7 @@ let engine, world;
 let sprites = [];
 let leftHandPusher, rightHandPusher, nosePusher;
 
+// ---------- Config ----------
 const CFG = {
   spriteCount: 25,
   spriteScaleMin: 0.10,
@@ -40,6 +51,7 @@ const CFG = {
   pusherRadiusNose: 85,
   poseConfidence: 0.15,
   showDebugPushers: false,
+  showDebugText: true, // <- shows "poses: N" in top-left
 };
 
 const CORNER = {
@@ -76,20 +88,20 @@ function setup() {
 
   // --- Bind Matter modules now that Matter exists ---
   Engine = Matter.Engine;
-  World  = Matter.World;
+  World = Matter.World;
   Bodies = Matter.Bodies;
-  Body   = Matter.Body;
+  Body = Matter.Body;
 
   // --- Create Matter world ---
   engine = Engine.create();
-  world  = engine.world;
+  world = engine.world;
   world.gravity.y = CFG.gravityY;
 
   // --- Filter out any failed loads (extra safety) ---
-  spriteImgs = spriteImgs.filter(img => img && img.width && img.height);
+  spriteImgs = spriteImgs.filter((img) => img && img.width && img.height);
 
   // --- Create sprites (only if images loaded) ---
-  sprites = []; // reset (safe if hot-reloading)
+  sprites = [];
   if (spriteImgs.length === 0) {
     console.warn("No sprite images loaded. Check your assets/ paths.");
   } else {
@@ -103,11 +115,12 @@ function setup() {
   }
 
   // --- Create pushers (need world to exist first) ---
-  leftHandPusher  = new PusherBody(0, 0, CFG.pusherRadiusHand);
+  leftHandPusher = new PusherBody(0, 0, CFG.pusherRadiusHand);
   rightHandPusher = new PusherBody(0, 0, CFG.pusherRadiusHand);
-  nosePusher      = new PusherBody(0, 0, CFG.pusherRadiusNose);
+  nosePusher = new PusherBody(0, 0, CFG.pusherRadiusNose);
 
-  // --- Webcam + BodyPose ---
+  // --- Webcam + BodyPose (FIXED) ---
+  // IMPORTANT: Use a constraints object and pass it to createCapture(constraints)
   const constraints = {
     video: {
       facingMode: "user",
@@ -117,18 +130,17 @@ function setup() {
     audio: false,
   };
 
-
-  video = createCapture({ video: true, audio: false });
+  video = createCapture(constraints);
   video.size(windowWidth, windowHeight);
 
   // iOS / mobile friendliness
   video.elt.setAttribute("playsinline", "");
   video.elt.muted = true;
 
-  // Hide the DOM video element; we’ll draw it to the canvas
+  // Hide DOM video; draw via image(video, ...)
   video.hide();
 
-  // Wait until video has metadata (real dimensions) then start BodyPose
+  // Start BodyPose once video is truly ready
   video.elt.onloadedmetadata = () => {
     startBodyPose();
   };
@@ -137,16 +149,20 @@ function setup() {
 // Start bodypose (separated so we can use async cleanly)
 async function startBodyPose() {
   try {
+    // Some browsers need an explicit play
     const playPromise = video.elt.play();
     if (playPromise && typeof playPromise.then === "function") {
       await playPromise;
     }
 
+    // Load BodyPose model (ml5 v0.12.2 supports this)
     const maybeModel = ml5.bodyPose();
-    bodyPose = (maybeModel && typeof maybeModel.then === "function")
-      ? await maybeModel
-      : maybeModel;
+    bodyPose =
+      maybeModel && typeof maybeModel.then === "function"
+        ? await maybeModel
+        : maybeModel;
 
+    // Start pose detection
     bodyPose.detectStart(video, gotPoses);
 
     console.log("✅ Camera + BodyPose started");
@@ -156,37 +172,48 @@ async function startBodyPose() {
   }
 }
 
-  // (Optional) If you want to see the DOM video briefly for debugging,
-  // comment out video.hide() above.
-
 function draw() {
   background(0);
 
-  // Only draw video if it exists
-if (video) {
-  push();
-  translate(width, 0);
-  scale(-1, 1);
-  image(video, 0, 0, width, height);
-  pop();
-}
+  // Draw mirrored video (so it feels like a mirror)
+  if (video) {
+    push();
+    translate(width, 0);
+    scale(-1, 1);
+    image(video, 0, 0, width, height);
+    pop();
+  }
 
-  // Only step physics if engine exists
+  // Step physics
   if (engine) Engine.update(engine);
 
+  // Draw + contain sprites
   for (const s of sprites) {
     s.show();
     s.bounceOffEdges();
   }
 
+  // Update pushers from pose
   updatePushersFromPose();
 
+  // Optional debug rings for pushers
   if (CFG.showDebugPushers) {
     leftHandPusher.showDebug();
     rightHandPusher.showDebug();
     nosePusher.showDebug();
   }
 
+  // Optional debug text
+  if (CFG.showDebugText) {
+    push();
+    fill(0, 255, 0);
+    noStroke();
+    textSize(18);
+    text(`poses: ${poses.length}`, 20, 30);
+    pop();
+  }
+
+  // Draw corner graphics
   drawFixedCorners();
 }
 
@@ -201,7 +228,13 @@ function drawFixedCorners() {
 
   const brW = cornerBR.width * CORNER.brScale;
   const brH = cornerBR.height * CORNER.brScale;
-  image(cornerBR, width - brW - CORNER.padding, height - brH - CORNER.padding, brW, brH);
+  image(
+    cornerBR,
+    width - brW - CORNER.padding,
+    height - brH - CORNER.padding,
+    brW,
+    brH
+  );
 }
 
 function windowResized() {
@@ -221,15 +254,16 @@ function updatePushersFromPose() {
   for (const kp of pose.keypoints) {
     if (kp.confidence < CFG.poseConfidence) continue;
 
-const fx = width - kp.x; // mirror x to match the mirrored video you’re drawing
+    // Mirror X to match mirrored video draw
+    const fx = width - kp.x;
 
-if (kp.name === "left_wrist") leftHandPusher.setPosition(fx, kp.y);
-else if (kp.name === "right_wrist") rightHandPusher.setPosition(fx, kp.y);
-else if (kp.name === "nose") nosePusher.setPosition(fx, kp.y);
-
+    if (kp.name === "left_wrist") leftHandPusher.setPosition(fx, kp.y);
+    else if (kp.name === "right_wrist") rightHandPusher.setPosition(fx, kp.y);
+    else if (kp.name === "nose") nosePusher.setPosition(fx, kp.y);
   }
 }
 
+// ---------- Classes ----------
 class SpriteBody {
   constructor(x, y, img, scale) {
     this.img = img;
@@ -303,4 +337,5 @@ class PusherBody {
     pop();
   }
 }
+
 
