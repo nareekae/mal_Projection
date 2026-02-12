@@ -1,11 +1,12 @@
 /*
-  PNG SPRITES + POSE (BodyPose v1, PoseNet fallback) + MATTER.JS
-  - Uses ABSOLUTE GitHub Pages asset paths: /mal_Projection/assets/...
-  - Loud asset load logging (sprites + corners) so you can see exactly what fails
-  - Forces TF backend to webgl (or cpu fallback) to reduce WebGPU adapter errors
-  - Starts pose only after video metadata is ready
-  - Mirrors video + mirrors pose X so pushers match what you see
-  - Debug HUD: poseSystem, poses length, spritesLoaded
+  MAL Projection — GitHub Pages bulletproof version
+
+  Fixes:
+  - Auto-detect GitHub Pages base path (no hardcoded /mal_Projection/)
+  - Tries multiple asset base paths and logs what works
+  - Loads sprites only after confirming a reachable base
+  - Forces TF backend away from WebGPU (removes webgpu backend if present)
+  - Mirrors video + mirrors pose X so pushers line up
 */
 
 let video;
@@ -13,34 +14,20 @@ let poseModel = null;
 let poses = [];
 let poseSystem = "none";
 
-// ---------- ASSETS (GitHub Pages-safe absolute base) ----------
-const ASSET_BASE = "/mal_Projection/assets/";
-
-const SPRITE_FILES = [
-  ASSET_BASE + "Mal.png",
-  ASSET_BASE + "Mal1.png",
-  ASSET_BASE + "Mal2.png",
-  ASSET_BASE + "Mal3.png",
-  ASSET_BASE + "Mal4.png",
-  ASSET_BASE + "Mal5.png",
-  ASSET_BASE + "Mal6.png",
-  ASSET_BASE + "Mal7.png",
-  ASSET_BASE + "Mal8.png",
-  ASSET_BASE + "Mal9.png",
-];
+let ASSET_BASE = null; // chosen at runtime
+const SPRITE_NAMES = ["Mal.png","Mal1.png","Mal2.png","Mal3.png","Mal4.png","Mal5.png","Mal6.png","Mal7.png","Mal8.png","Mal9.png"];
 
 let spriteImgs = [];
 let cornerTL, cornerBR;
 
-// ---------- Matter.js ----------
+// Matter.js
 let Engine, World, Bodies, Body;
 let engine, world;
 
-// ---------- Simulation ----------
+// Simulation
 let sprites = [];
 let leftHandPusher, rightHandPusher, nosePusher;
 
-// ---------- Config ----------
 const CFG = {
   spriteCount: 25,
   spriteScaleMin: 0.10,
@@ -55,77 +42,139 @@ const CFG = {
   showDebugText: true,
 };
 
-const CORNER = {
-  padding: 50,
-  tlScale: 0.7,
-  brScale: 0.35,
-};
+const CORNER = { padding: 50, tlScale: 0.7, brScale: 0.35 };
+
+// ---------- helpers ----------
+function ghPagesSiteRoot() {
+  // If URL is https://user.github.io/repo/..., this returns "/repo/"
+  const parts = window.location.pathname.split("/").filter(Boolean);
+  return parts.length ? `/${parts[0]}/` : "/";
+}
+
+async function urlExists(url) {
+  try {
+    const r = await fetch(url, { method: "HEAD", cache: "no-store" });
+    return r.ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function pickAssetBase() {
+  const siteRoot = ghPagesSiteRoot();
+  const candidates = [
+    `${siteRoot}assets/`,   // most common correct GH pages structure
+    `./assets/`,            // sometimes works depending on where sketch is served
+    `/assets/`,             // only works if assets at domain root (rare)
+  ];
+
+  // Probe a file you definitely have:
+  const probeName = "Mal.png";
+  for (const base of candidates) {
+    const probeUrl = new URL(base + probeName, window.location.href).href;
+    console.log("🔎 Probing:", probeUrl);
+    if (await urlExists(probeUrl)) {
+      console.log("✅ Asset base found:", base);
+      return base;
+    }
+  }
+
+  console.warn("❌ Could not find a working assets base. Check repo structure /assets next to index.html.");
+  return candidates[0]; // default guess so errors are at least consistent
+}
+
+function loadImageAsync(path) {
+  return new Promise((resolve) => {
+    loadImage(
+      path,
+      (img) => resolve({ ok: true, img, path }),
+      () => resolve({ ok: false, img: null, path })
+    );
+  });
+}
+
+async function loadAllAssets() {
+  ASSET_BASE = await pickAssetBase();
+
+  // Load corners with loud logs
+  {
+    const p = ASSET_BASE + "GYOPO.png";
+    const res = await loadImageAsync(p);
+    if (res.ok) {
+      cornerTL = res.img;
+      console.log("✅ loaded", p);
+    } else {
+      console.error("❌ failed", p);
+    }
+  }
+  {
+    const p = ASSET_BASE + "Lunar_New_Year.png";
+    const res = await loadImageAsync(p);
+    if (res.ok) {
+      cornerBR = res.img;
+      console.log("✅ loaded", p);
+    } else {
+      console.error("❌ failed", p);
+    }
+  }
+
+  // Load sprites with loud logs
+  const loaded = [];
+  for (const name of SPRITE_NAMES) {
+    const p = ASSET_BASE + name;
+    const res = await loadImageAsync(p);
+    if (res.ok) {
+      loaded.push(res.img);
+      console.log("✅ loaded", p);
+    } else {
+      console.error("❌ failed", p, "(case-sensitive on GitHub!)");
+    }
+  }
+
+  spriteImgs = loaded;
+}
 
 // ---------- TF backend hardening ----------
-async function forceTfBackend() {
-  // ml5 bundles tfjs; on machines without WebGPU this reduces noisy failures
+async function forceTfNoWebGPU() {
   if (typeof tf === "undefined") return;
 
   try {
-    const current = tf.getBackend ? tf.getBackend() : "unknown";
-    console.log("🔧 TF current backend:", current);
+    // If webgpu backend is registered, remove it so tf won't try it
+    if (tf.removeBackend) {
+      try { tf.removeBackend("webgpu"); } catch (e) {}
+    }
 
-    // Force WebGL first
-    await tf.setBackend("webgl");
-    await tf.ready();
-    console.log("✅ TF backend forced to webgl");
-  } catch (e) {
-    console.warn("⚠️ WebGL backend failed; trying cpu", e);
-    try {
+    // Force webgl; fall back to cpu
+    if (tf.setBackend && tf.ready) {
+      try {
+        await tf.setBackend("webgl");
+        await tf.ready();
+        console.log("✅ TF backend forced to webgl");
+        return;
+      } catch (e) {}
+
       await tf.setBackend("cpu");
       await tf.ready();
       console.log("✅ TF backend forced to cpu");
-    } catch (e2) {
-      console.warn("⚠️ CPU backend also failed", e2);
     }
+  } catch (e) {
+    console.warn("⚠️ TF backend forcing failed:", e);
   }
 }
 
-// ---------- Preload ----------
+// ---------- p5 preload/setup/draw ----------
 function preload() {
-  // Corners (log success/fail loudly)
-  cornerTL = loadImage(
-    ASSET_BASE + "GYOPO.png",
-    () => console.log("✅ loaded", ASSET_BASE + "GYOPO.png"),
-    () => console.error("❌ failed", ASSET_BASE + "GYOPO.png", "(check exact name + folder)")
-  );
-
-  cornerBR = loadImage(
-    ASSET_BASE + "Lunar_New_Year.png",
-    () => console.log("✅ loaded", ASSET_BASE + "Lunar_New_Year.png"),
-    () => console.error("❌ failed", ASSET_BASE + "Lunar_New_Year.png", "(check exact name + folder)")
-  );
-
-  // Sprites (log success/fail loudly)
-  spriteImgs = SPRITE_FILES.map((path) =>
-    loadImage(
-      path,
-      () => console.log("✅ loaded", path),
-      () => console.error("❌ failed", path, "(case-sensitive on GitHub!)")
-    )
-  );
+  // IMPORTANT: we don’t load images here anymore because we want async base probing.
+  // preload() must be synchronous; GitHub Pages path probing is easier async in setup().
 }
 
-// ---------- Setup ----------
-function setup() {
+async function setup() {
   createCanvas(windowWidth, windowHeight);
 
-  // Path proof in console (copy/paste into browser to test)
-  console.log("🔎 Asset base resolves to:", new URL(ASSET_BASE, window.location.href).href);
-  console.log("🔎 Example sprite URL:", new URL(SPRITE_FILES[0], window.location.href).href);
+  if (typeof Matter === "undefined") throw new Error("Matter.js not found.");
+  if (typeof ml5 === "undefined") throw new Error("ml5.js not found.");
 
-  if (typeof Matter === "undefined") {
-    throw new Error("Matter.js not found. Check your <script> tag for matter.min.js");
-  }
-  if (typeof ml5 === "undefined") {
-    throw new Error("ml5.js not found. Check your <script> tag for ml5.min.js");
-  }
-
+  // Matter bind + world
   Engine = Matter.Engine;
   World = Matter.World;
   Bodies = Matter.Bodies;
@@ -135,90 +184,62 @@ function setup() {
   world = engine.world;
   world.gravity.y = CFG.gravityY;
 
-  // Filter out failed sprite loads
-  spriteImgs = spriteImgs.filter((img) => img && img.width && img.height);
+  // Load assets (async)
+  await loadAllAssets();
 
-  // Create sprites
+  // Create sprites once images exist
   sprites = [];
   if (spriteImgs.length === 0) {
-    console.warn("⚠️ No sprite images loaded. Assets are still not reachable at:", ASSET_BASE);
+    console.warn("⚠️ No sprite images loaded. Your assets are NOT reachable at:", ASSET_BASE);
   } else {
     for (let i = 0; i < CFG.spriteCount; i++) {
       const img = random(spriteImgs);
       const scale = random(CFG.spriteScaleMin, CFG.spriteScaleMax);
-      const x = random(60, width - 60);
-      const y = random(60, height - 60);
-      sprites.push(new SpriteBody(x, y, img, scale));
+      sprites.push(new SpriteBody(random(60, width - 60), random(60, height - 60), img, scale));
     }
   }
 
-  // Pushers (static bodies)
+  // Pushers
   leftHandPusher = new PusherBody(0, 0, CFG.pusherRadiusHand);
   rightHandPusher = new PusherBody(0, 0, CFG.pusherRadiusHand);
   nosePusher = new PusherBody(0, 0, CFG.pusherRadiusNose);
 
-  // Webcam
-  const constraints = {
-    video: {
-      facingMode: "user",
-      width: { ideal: 1280 },
-      height: { ideal: 720 },
-    },
-    audio: false,
-  };
-
+  // Camera
+  const constraints = { video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false };
   video = createCapture(constraints);
   video.size(windowWidth, windowHeight);
   video.elt.setAttribute("playsinline", "");
   video.elt.muted = true;
   video.hide();
 
-  // Start pose once video is ready
-  video.elt.onloadedmetadata = () => {
-    startPose();
-  };
+  video.elt.onloadedmetadata = () => startPose();
 }
 
-// ---------- Pose startup (BodyPose or PoseNet fallback) ----------
 async function startPose() {
   try {
-    // Stabilize TF backend before model load
-    await forceTfBackend();
+    await forceTfNoWebGPU();
 
-    // Ensure video plays
     const playPromise = video.elt.play();
-    if (playPromise && typeof playPromise.then === "function") {
-      await playPromise;
-    }
+    if (playPromise && typeof playPromise.then === "function") await playPromise;
 
-    // BodyPose (ml5 v1+)
     if (typeof ml5.bodyPose === "function") {
       poseSystem = "bodyPose";
       console.log("✅ Using ml5.bodyPose(video)");
-
       let maybe = ml5.bodyPose(video);
       poseModel = (maybe && typeof maybe.then === "function") ? await maybe : maybe;
 
       poseModel.detectStart(video, (results) => {
         poses = results || [];
-        // One-time sample log (helps confirm keypoint shape)
-        if (poses[0] && !poses.__loggedOnce) {
-          console.log("🔎 first pose sample:", poses[0]);
-          poses.__loggedOnce = true;
-        }
       });
 
       console.log("✅ BodyPose started");
       return;
     }
 
-    // PoseNet (ml5 v0.x fallback)
     if (typeof ml5.poseNet === "function") {
       poseSystem = "poseNet";
-      console.log("✅ BodyPose unavailable. Using ml5.poseNet(video)");
-
+      console.log("✅ Falling back to ml5.poseNet(video)");
       poseModel = ml5.poseNet(video, () => console.log("✅ PoseNet model loaded"));
-
       poseModel.on("pose", (results) => {
         poses = (results || []).map((r) => ({
           keypoints: (r.pose?.keypoints || []).map((k) => ({
@@ -228,29 +249,21 @@ async function startPose() {
             confidence: k.score,
           })),
         }));
-
-        if (poses[0] && !poses.__loggedOnce) {
-          console.log("🔎 first pose sample (PoseNet-normalized):", poses[0]);
-          poses.__loggedOnce = true;
-        }
       });
-
       console.log("✅ PoseNet started");
       return;
     }
 
-    poseSystem = "none";
-    throw new Error("Neither ml5.bodyPose nor ml5.poseNet exists. Check your ml5 script include.");
+    throw new Error("Neither ml5.bodyPose nor ml5.poseNet is available.");
   } catch (err) {
     console.error("❌ Pose init failed:", err);
   }
 }
 
-// ---------- Draw ----------
 function draw() {
   background(0);
 
-  // Draw mirrored video
+  // mirrored video
   if (video) {
     push();
     translate(width, 0);
@@ -259,29 +272,23 @@ function draw() {
     pop();
   }
 
-  // Physics step
   if (engine) Engine.update(engine);
 
-  // Render sprites
   for (const s of sprites) {
     s.show();
     s.bounceOffEdges();
   }
 
-  // Update pushers from pose
   updatePushersFromPose();
 
-  // Optional debug rings
   if (CFG.showDebugPushers) {
     leftHandPusher.showDebug();
     rightHandPusher.showDebug();
     nosePusher.showDebug();
   }
 
-  // Corner overlays
   drawFixedCorners();
 
-  // Debug HUD
   if (CFG.showDebugText) {
     push();
     fill(0, 255, 0);
@@ -290,21 +297,18 @@ function draw() {
     text(`poseSystem: ${poseSystem}`, 20, 26);
     text(`poses: ${poses.length}`, 20, 46);
     text(`spritesLoaded: ${spriteImgs.length}`, 20, 66);
-
+    text(`ASSET_BASE: ${ASSET_BASE || "none"}`, 20, 86);
     if (spriteImgs.length === 0) {
       fill(255, 80, 80);
       textSize(18);
-      text(`⚠️ Sprites not loading from: ${ASSET_BASE}`, 20, 95);
-      text(`Try opening: ${SPRITE_FILES[0]}`, 20, 118);
+      text("⚠️ Sprites not loading. The probe URLs in console will tell you the real path.", 20, 112);
     }
     pop();
   }
 }
 
-// ---------- Corners ----------
 function drawFixedCorners() {
   if (!cornerTL || !cornerBR) return;
-
   imageMode(CORNER);
 
   const tlW = cornerTL.width * CORNER.tlScale;
@@ -313,45 +317,29 @@ function drawFixedCorners() {
 
   const brW = cornerBR.width * CORNER.brScale;
   const brH = cornerBR.height * CORNER.brScale;
-  image(
-    cornerBR,
-    width - brW - CORNER.padding,
-    height - brH - CORNER.padding,
-    brW,
-    brH
-  );
+  image(cornerBR, width - brW - CORNER.padding, height - brH - CORNER.padding, brW, brH);
 }
 
-// ---------- Resize ----------
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
   if (video) video.size(windowWidth, windowHeight);
 }
 
-// ---------- Pose → pushers ----------
 function updatePushersFromPose() {
   if (!poses || poses.length === 0) return;
-
   const first = poses[0];
   if (!first || !first.keypoints) return;
 
   for (const kp of first.keypoints) {
     if (!kp) continue;
-
-    // Some outputs use score instead of confidence; normalize
-    const conf = (kp.confidence !== undefined) ? kp.confidence : (kp.score !== undefined ? kp.score : 0);
+    const conf = kp.confidence ?? kp.score ?? 0;
     if (conf < CFG.poseConfidence) continue;
 
-    // BodyPose may use x/y directly or position.x/position.y; normalize
-    const x = (kp.x !== undefined) ? kp.x : (kp.position?.x ?? null);
-    const y = (kp.y !== undefined) ? kp.y : (kp.position?.y ?? null);
-    if (x === null || y === null) continue;
+    const x = kp.x ?? kp.position?.x;
+    const y = kp.y ?? kp.position?.y;
+    if (x == null || y == null) continue;
 
-    // Mirror X to match mirrored video draw
     const fx = width - x;
-
-    // BodyPose uses "left_wrist"/"right_wrist"/"nose"
-    // PoseNet uses "leftWrist"/"rightWrist"/"nose" (sometimes)
     const name = kp.name || kp.part || "";
 
     if (name === "left_wrist" || name === "leftWrist") leftHandPusher.setPosition(fx, y);
